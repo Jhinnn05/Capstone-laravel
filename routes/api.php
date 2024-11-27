@@ -33,6 +33,8 @@ Route::get('/getMessages', [AuthController::class, 'getMessages']);
 Route::get('/getConvo/{sid}', [AuthController::class, 'getConvo']);
 Route::post('/sendMessage', [AuthController::class, 'sendMessage']);
 
+//announcements
+Route::get('announcements',[AuthController::class,'getAnnouncements']);
 
 //upload image
 Route::post('/upload-image', [AuthController::class, 'uploadImage']);

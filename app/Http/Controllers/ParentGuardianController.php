@@ -167,34 +167,47 @@ public function displaySOA($LRN) {
     }
 
     public function getClassGrades($cid) {
-    $grades = DB::table('rosters')
-        ->join('students', 'rosters.LRN', '=', 'students.LRN')
-        ->leftJoin('grades', 'rosters.LRN', '=', 'grades.LRN')
-        ->join('classes', 'rosters.class_id', '=', 'classes.class_id')  // Joining classes table
-        ->join('subjects', 'classes.subject_id', '=', 'subjects.subject_id')  // Joining subjects table
-        ->select(
-            'students.LRN',
-            'students.fname AS student_fname',
-            'students.lname AS student_lname',
-            'students.contact_no AS student_contact_no',
-            'subjects.subject_name',  // Selecting subject_name from subjects table
-            DB::raw("MAX(CASE WHEN grades.term = 'First Quarter' THEN grades.grade ELSE NULL END) AS grade_Q1"),
-            DB::raw("MAX(CASE WHEN grades.term = 'Second Quarter' THEN grades.grade ELSE NULL END) AS grade_Q2"),
-            DB::raw("MAX(CASE WHEN grades.term = 'Third Quarter' THEN grades.grade ELSE NULL END) AS grade_Q3"),
-            DB::raw("MAX(CASE WHEN grades.term = 'Fourth Quarter' THEN grades.grade ELSE NULL END) AS grade_Q4")
-        )
-        ->where('students.LRN', '=', $cid)  // Filtering by student LRN only
-        ->groupBy('students.LRN', 'students.fname', 'students.lname', 'students.contact_no', 'subjects.subject_name')
-        ->orderBy('students.lname')
-        ->get();
+        $grades = DB::table('rosters')
+            ->join('students', 'rosters.LRN', '=', 'students.LRN')
+            ->leftJoin('grades', function($join) {
+                $join->on('rosters.LRN', '=', 'grades.LRN')
+                     ->on('rosters.class_id', '=', 'grades.class_id');
+            })
+            ->join('classes', 'rosters.class_id', '=', 'classes.class_id')
+            ->join('subjects', 'classes.subject_id', '=', 'subjects.subject_id')
+            ->select(
+                'students.LRN',
+                'students.fname AS student_fname',
+                'students.lname AS student_lname',
+                'students.contact_no AS student_contact_no',
+                'subjects.subject_name',
+                DB::raw('MAX(CASE WHEN grades.term = "First Quarter" THEN grades.grade END) AS `First_Quarter`'),
+                DB::raw('MAX(CASE WHEN grades.term = "Second Quarter" THEN grades.grade END) AS `Second_Quarter`'),
+                DB::raw('MAX(CASE WHEN grades.term = "Third Quarter" THEN grades.grade END) AS `Third_Quarter`'),
+                DB::raw('MAX(CASE WHEN grades.term = "Fourth Quarter" THEN grades.grade END) AS `Fourth_Quarter`')
+            )
+            ->where('students.LRN', '=', $cid)  // Filtering by the student's LRN
+            ->groupBy(
+                'students.LRN',
+                'students.fname',
+                'students.lname',
+                'students.contact_no',
+                'subjects.subject_name'
+            )
+            ->orderBy('subjects.subject_name')
+            ->get();
+    
         return response()->json($grades);  // Return results as JSON
     }
     public function getAttendance($lcn) {
         $attendance = DB::table('attendances')
+            ->join('classes', 'attendances.class_id', '=', 'classes.class_id')  // Joining with classes
+            ->leftJoin('subjects', 'classes.subject_id', '=', 'subjects.subject_id')  // Left joining with subjects
             ->select(
                 'attendances.LRN',
                 'attendances.status AS attendance_status',
-                'attendances.date'  // Use the date column
+                'attendances.date',  // Use the date column
+                'subjects.subject_name'  // Selecting subject name from classes
             )
             ->where('attendances.LRN', '=', $lcn)  // Filtering by student LRN
             ->orderBy('attendances.date')  // Order by date

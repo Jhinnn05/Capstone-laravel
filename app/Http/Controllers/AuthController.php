@@ -6,10 +6,12 @@ use Illuminate\Http\Request;
 // use App\Models\User;
 use App\Models\ParentGuardian;
 use App\Models\Message;
+use App\Models\Announcement;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 class AuthController extends Controller
 {
+    //login
     public function login(Request $request)
     {
         $request->validate([
@@ -22,9 +24,7 @@ class AuthController extends Controller
         if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json(['message' => 'The provided credentials are incorrect'], 401);
         }
-
         $token = $user->createToken('auth_token')->plainTextToken;
-
         return response()->json([
             'parent' => $user,
             'token' => $token,
@@ -32,51 +32,43 @@ class AuthController extends Controller
             'email' => $user->email
         ]);
     }
-
+    //logout
     public function logout(Request $request)
     {
-        $user = $request->user(); // Retrieve the authenticated user
-
+        $user = $request->user(); 
         if ($user) {
-            // Revoke the user's current token
             $user->currentAccessToken()->delete();
             return response()->json(['message' => 'Logged out successfully.']);
         }
-
         return response()->json(['message' => 'No user authenticated'], 401);
     }
-
     //password update
     public function UserDetails($email){
         $user = ParentGuardian::where('email',$email)
                         ->first();
         return $user;
-    }
-    
+    }    
         public function updatePass(Request $request)
     {
-        // Validate incoming request
         $request->validate([
-            'email' => 'required|email|max:255|exists:parent_guardians,email', // Check existence for email
-            'oldPassword' => 'nullable|string', // Make oldPassword optional
-            'newPassword' => 'nullable|string|min:8|confirmed', // Allow newPassword to be optional
+            'email' => 'required|email|max:255|exists:parent_guardians,email', 
+            'oldPassword' => 'nullable|string',
+            'newPassword' => 'nullable|string|min:8|confirmed', 
             'fname' => 'required|string|max:255',
             'mname' => 'required|string|max:255',
             'lname' => 'required|string|max:255',
             'address' => 'required|string|max:255',
         ]);
 
-        // Retrieve user by email
+       
         $user = ParentGuardian::where('email', $request->email)->first();
 
-        // If old password is provided, check it
         if ($request->oldPassword && !Hash::check($request->oldPassword, $user->password)) {
             return response()->json(['message' => 'Wrong password'], 401);
         }
 
-        // Update user details
         if ($request->newPassword) {
-            $user->password = Hash::make($request->newPassword); // Update password if provided
+            $user->password = Hash::make($request->newPassword); 
         }
 
         $user->fname = $request->fname;
@@ -84,10 +76,11 @@ class AuthController extends Controller
         $user->lname = $request->lname;
         $user->address = $request->address;
 
-        $user->save(); // Save all changes
+        $user->save();
 
         return response()->json(['message' => 'User  details updated successfully']);
     }
+    //upload image
     public function uploadImage(Request $request)
     {
         $request->validate([
@@ -96,131 +89,168 @@ class AuthController extends Controller
         ]);
 
         try {
-            // Get the email from the request
+            
             $email = $request->input('email');
-            \Log::info('Uploading image for email: ' . $email); // Log email
+            \Log::info('Uploading image for email: ' . $email); 
 
             $image = $request->file('image');
             $imageName = time() . '.' . $image->getClientOriginalExtension();
             $destinationPath = public_path('assets/parentPic');
 
-            // Ensure the directory exists
+           
             if (!is_dir($destinationPath)) {
-                \Log::info('Creating directory: ' . $destinationPath); // Log directory creation
+                \Log::info('Creating directory: ' . $destinationPath);
                 mkdir($destinationPath, 0755, true);
             }
 
-            // Get all parent guardians with the same email
+          
             $parentGuardians = ParentGuardian::where('email', $email)->get();
-            \Log::info('Found ' . $parentGuardians->count() . ' parent guardians with email: ' . $email); // Log count of guardians
-
-            // Loop through each parent guardian to delete old images
+            \Log::info('Found ' . $parentGuardians->count() . ' parent guardians with email: ' . $email);
             foreach ($parentGuardians as $parentGuardian) {
-                // Delete the old image if it exists
                 if ($parentGuardian->parent_pic && file_exists($path = $destinationPath . '/' . $parentGuardian->parent_pic)) {
-                    \Log::info('Deleting old image: ' . $path); // Log old image deletion
+                    \Log::info('Deleting old image: ' . $path);
                     unlink($path);
                 }
             }
 
-            // Move the new image to the destination path
+            
             $image->move($destinationPath, $imageName);
-            \Log::info('New image uploaded: ' . $imageName); // Log new image upload
-
-            // Update all matching records with the new image name
+            \Log::info('New image uploaded: ' . $imageName);
             ParentGuardian::where('email', $email)->update(['parent_pic' => $imageName]);
-            \Log::info('Updated parent guardians with new image name: ' . $imageName); // Log database update
-
+            \Log::info('Updated parent guardians with new image name: ' . $imageName);
             return response()->json([
                 'message' => 'Image uploaded successfully.',
                 'image_url' => url('assets/parentPic/' . $imageName)
             ]);
         } catch (\Exception $e) {
-            \Log::error('Image upload failed: ' . $e->getMessage()); // Log the error
+            \Log::error('Image upload failed: ' . $e->getMessage());
             return response()->json(['error' => 'Image upload failed.'], 500);
         }
     }
 
-    //messages
+    public function displaySOA($LRN) {
+    // No need to validate LRN here, as it's a route parameter
+    $id = $LRN;
+
+    // Query the payments and related data
+    $payments = DB::table('payments')
+        ->join('enrollments', 'payments.LRN', '=', 'enrollments.LRN')
+        ->join('students', 'payments.LRN', '=', 'students.LRN')
+        ->leftJoin('tuitions', 'enrollments.grade_level', '=', 'tuitions.grade_level')
+        ->select(
+            'students.lname',
+            'students.fname',
+            'students.mname',
+            'payments.amount_paid',
+            'payments.description',
+            'payments.OR_number',
+            'payments.date_of_payment',
+            'tuitions.tuition',
+            DB::raw('COALESCE(SUM(payments.amount_paid), 0) AS total_paid'),
+            DB::raw('COALESCE(SUM(tuitions.tuition), 0) AS total_tuition')
+        )
+        ->where('payments.LRN', $id)
+        ->groupBy(
+            'students.lname',
+            'students.fname',
+            'students.mname',
+            'payments.amount_paid',
+            'payments.description',
+            'payments.OR_number',
+            'payments.date_of_payment',
+            'tuitions.tuition',
+        )
+        ->get();
+
+        // Calculate the tuition fee (assumed to be the same for the student)
+        $tuition = $payments->isNotEmpty() ? $payments[0]->total_tuition : 0;
+
+        // Initialize remaining balance
+        $remainingBalance = $tuition;
+
+        // Create an array to hold the payment details with running balance
+        $paymentDetails = [];
+
+        foreach ($payments as $payment) {
+            // Subtract the current payment from the remaining balance
+            $remainingBalance -= $payment->amount_paid;
+
+            // Add to payment details with the current balance
+            $paymentDetails[] = [
+                'name' => "{$payment->lname} {$payment->fname} {$payment->mname}",
+                'tuition' => $payment->tuition,
+                'OR_number' => $payment->OR_number,
+                'description' => $payment->description,
+                'amount_paid' => $payment->amount_paid,
+                'date_of_payment' => $payment->date_of_payment,
+                'remaining_balance' => $remainingBalance
+            ];
+        }
+
+        // Return the response
+        return response()->json([
+            'tuition_fee' => $tuition,
+            'payments' => $paymentDetails,
+            'remaining_balance' => $remainingBalance,
+        ], 200);
+    }
+
+    //getMessages
     public function getMessages(Request $request) {
         $uid = $request->input('uid');
     
-        // Subquery to get the latest message for each sender
-        $latestMessages = DB::table('messages')
-            ->select('message_sender', DB::raw('MAX(created_at) as max_created_at'))
-            ->groupBy('message_sender');
-    
         // Main query to get messages
         $msg = DB::table('messages')
-            // ->leftJoin('students', function ($join) {
-            //     $join->on('messages.message_sender', '=', 'students.LRN');
-            // })
             ->leftJoin('admins', function ($join) {
                 $join->on('messages.message_sender', '=', 'admins.admin_id');
-            })
-            // ->leftJoin('parent_guardians', function ($join) {
-            //     $join->on('messages.message_sender', '=', 'parent_guardians.guardian_id');
-            // })
-            ->joinSub($latestMessages, 'latest_messages', function ($join) {
-                $join->on('messages.message_sender', '=', 'latest_messages.message_sender')
-                    ->on('messages.created_at', '=', 'latest_messages.max_created_at');
             })
             ->where('messages.message_reciever', '=', $uid) // Filter by receiver
             ->select('messages.*', 
                 DB::raw('CASE 
                     WHEN messages.message_sender IN (SELECT admin_id FROM admins) THEN CONCAT(admins.fname, " ", LEFT(admins.mname, 1), ". ", admins.lname)
+                    ELSE "Unknown Sender"  -- Fallback for senders not in admins
                 END as sender_name'))
             ->orderBy('messages.created_at', 'desc')
             ->get();
-        
+    
         return $msg;
-        
     }
-
+    //getAdmins
     public function getAdmins() {
-        // Fetch students
         $admins = DB::table('admins')
-            ->select('admins.admin_id', 'admins.role', DB::raw('CONCAT(admins.fname, " ", LEFT(admins.mname, 1), ". ", admins.lname) as account_name'))
+            ->select(
+                'admins.admin_id',
+                'admins.role',
+                DB::raw('IF(admins.mname IS NOT NULL AND admins.mname != "", 
+                            CONCAT(admins.fname, " ", LEFT(admins.mname, 1), ". ", admins.lname), 
+                            CONCAT(admins.fname, " ", admins.lname)) as account_name')
+            )
             ->where('admins.role', '!=', 'DSF')
             ->get()
-            ->map(function ($admins) {
+            ->map(function ($admin) {
                 return [
-                    'account_id' => $admins->admin_id,
-                    'account_name' => $admins->account_name,
-                    'type' => $admins->role,
+                    'account_id' => $admin->admin_id,
+                    'account_name' => $admin->account_name,
+                    'type' => $admin->role,
                 ];
             });
-
-        // Combine both collections into one
-        // $accounts = $students;
-
         return response()->json($admins);
     } 
-    
+    //getConvo
     public function getConvo(Request $request, $sid) {
-        // Initialize the response variable
         $user = null;
-    
-        // Check if the $sid corresponds to a student
-        $admins = DB::table('admins')
+            $admins = DB::table('admins')
             ->where('admins.admin_id', $sid)
             ->select('admins.admin_id', 'admins.role', DB::raw('CONCAT(admins.fname, " ", LEFT(admins.mname, 1), ". ", admins.lname) as account_name'))
             ->where('admins.role', '!=', 'DSF')
-            ->first(); // Use first() to get a single record
-
-          
+            ->first();
             $user = [
                 'account_id' => $admins->admin_id,
                 'account_name' => $admins->account_name,
                 'type' => $admins->role,
             ];
-      
-    
-        // Initialize the conversation variable
         $convo = [];
-    
-        // If user is found, fetch the conversation
-        if ($admins) {
+            if ($admins) {
             $uid = $request->input('uid');
     
             $convo = DB::table('messages')
@@ -247,13 +277,12 @@ class AuthController extends Controller
             ->get();
 
         }
-    
-        // Return the user information and conversation or a not found message
-        return response()->json([
+            return response()->json([
             'user' => $user ?: ['message' => 'User  not found'],
             'conversation' => $convo,
         ]);
     }
+    //sendMessage
     public function sendMessage(Request $request){
         $validator = Validator::make($request->all(), [
             'message_sender' => 'required',
@@ -266,15 +295,14 @@ class AuthController extends Controller
         }
 
         $message = Message::create([
-            'message_sender' => $request->input('message_sender'), // Ensure the key matches your database column
-            'message_reciever' => $request->input('message_reciever'), // Ensure the key matches your database column
-            'message' => $request->input('message'), // Ensure the key matches your database column
+            'message_sender' => $request->input('message_sender'),
+            'message_reciever' => $request->input('message_reciever'),
+            'message' => $request->input('message'),
             'message_date' => now(),
         ]);
-
         return response()->json($message, 201);
     }
-    
+    //getrecepeints
     public function getrecepeints(Request $request)
     {
      $students = DB::table('students')
@@ -288,7 +316,6 @@ class AuthController extends Controller
     }
     public function composenewmessage(Request $request)
     {
-        // Validate the incoming request data
         $validated = $request->validate([
             'message' => 'required|string|max:5000',
             'message_date' => 'required|date',
@@ -319,7 +346,6 @@ class AuthController extends Controller
         ]);
     
         try {
-            // Create a new message
             $message = new Message();
             $message->message_sender = $validated['message_sender'];
             $message->message_reciever = $validated['message_reciever'];
@@ -327,7 +353,6 @@ class AuthController extends Controller
             $message->message_date = $validated['message_date'];
             $message->save();
     
-            // Log a success message
             Log::info('Message successfully composed', [
                 'message_id' => $message->message_id,
                 'sender' => $validated['message_sender'],
@@ -336,15 +361,18 @@ class AuthController extends Controller
                 'message_date' => $validated['message_date'],
             ]);
     
-            // Return the updated list of messages
-            return $this->getMessages($request);  // Call getMessages method to return updated conversation
+            return $this->getMessages($request); 
         } catch (\Exception $e) {
-            // Log any error that occurs
             Log::error('Error sending message: ' . $e->getMessage());
-    
-            // Return an error response
             return response()->json(['error' => 'Failed to send message'], 500);
         }
+    }
+
+    //announcements
+    public function getAnnouncements()
+    {
+        $announcements = Announcement::all();
+        return $announcements;
     }
 
 }
