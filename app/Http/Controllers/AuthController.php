@@ -15,7 +15,7 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $request->validate([
-            'email' => 'required|email|exists:parent_guardians,email',
+            'email' => 'required|email|regex:/^[\w\.-]+@[\w\.-]+\.\w+$/||exists:parent_guardians,email',
             'password' => 'required'
         ]);
 
@@ -24,23 +24,22 @@ class AuthController extends Controller
         if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json(['message' => 'The provided credentials are incorrect'], 401);
         }
-        $token = $user->createToken('auth_token')->plainTextToken;
+        // $token = $admin->createToken($admin->fname);
+        $token = $user->createToken($user->fname);
         return response()->json([
             'parent' => $user,
-            'token' => $token,
+            'token' => $token->plainTextToken,
             'id' => $user->guardian_id,
             'email' => $user->email
         ]);
     }
     //logout
-    public function logout(Request $request)
-    {
-        $user = $request->user(); 
-        if ($user) {
-            $user->currentAccessToken()->delete();
-            return response()->json(['message' => 'Logged out successfully.']);
-        }
-        return response()->json(['message' => 'No user authenticated'], 401);
+    public function logout(Request $request){
+        $request->user()->tokens()->delete();
+        return [
+            'message'=>'You are logged out'
+        ];
+        // return 'logout';
     }
     //password update
     public function UserDetails($email){
@@ -128,72 +127,8 @@ class AuthController extends Controller
         }
     }
 
-    public function displaySOA($LRN) {
-    // No need to validate LRN here, as it's a route parameter
-    $id = $LRN;
+    
 
-    // Query the payments and related data
-    $payments = DB::table('payments')
-        ->join('enrollments', 'payments.LRN', '=', 'enrollments.LRN')
-        ->join('students', 'payments.LRN', '=', 'students.LRN')
-        ->leftJoin('tuitions', 'enrollments.grade_level', '=', 'tuitions.grade_level')
-        ->select(
-            'students.lname',
-            'students.fname',
-            'students.mname',
-            'payments.amount_paid',
-            'payments.description',
-            'payments.OR_number',
-            'payments.date_of_payment',
-            'tuitions.tuition',
-            DB::raw('COALESCE(SUM(payments.amount_paid), 0) AS total_paid'),
-            DB::raw('COALESCE(SUM(tuitions.tuition), 0) AS total_tuition')
-        )
-        ->where('payments.LRN', $id)
-        ->groupBy(
-            'students.lname',
-            'students.fname',
-            'students.mname',
-            'payments.amount_paid',
-            'payments.description',
-            'payments.OR_number',
-            'payments.date_of_payment',
-            'tuitions.tuition',
-        )
-        ->get();
-
-        // Calculate the tuition fee (assumed to be the same for the student)
-        $tuition = $payments->isNotEmpty() ? $payments[0]->total_tuition : 0;
-
-        // Initialize remaining balance
-        $remainingBalance = $tuition;
-
-        // Create an array to hold the payment details with running balance
-        $paymentDetails = [];
-
-        foreach ($payments as $payment) {
-            // Subtract the current payment from the remaining balance
-            $remainingBalance -= $payment->amount_paid;
-
-            // Add to payment details with the current balance
-            $paymentDetails[] = [
-                'name' => "{$payment->lname} {$payment->fname} {$payment->mname}",
-                'tuition' => $payment->tuition,
-                'OR_number' => $payment->OR_number,
-                'description' => $payment->description,
-                'amount_paid' => $payment->amount_paid,
-                'date_of_payment' => $payment->date_of_payment,
-                'remaining_balance' => $remainingBalance
-            ];
-        }
-
-        // Return the response
-        return response()->json([
-            'tuition_fee' => $tuition,
-            'payments' => $paymentDetails,
-            'remaining_balance' => $remainingBalance,
-        ], 200);
-    }
 
     //getMessages
     public function getMessages(Request $request) {
@@ -201,21 +136,130 @@ class AuthController extends Controller
     
         // Main query to get messages
         $msg = DB::table('messages')
-            ->leftJoin('admins', function ($join) {
-                $join->on('messages.message_sender', '=', 'admins.admin_id');
+            ->leftJoin('admins', 'messages.message_sender', '=', 'admins.admin_id') // Sender admin details
+            ->leftJoin('admins as receiver_admins', 'messages.message_reciever', '=', 'receiver_admins.admin_id') // Receiver admin details
+            ->where(function($query) use ($uid) {
+                $query->where('messages.message_sender', '=', $uid) // Messages sent by the user
+                      ->orWhere('messages.message_reciever', '=', $uid); // Messages received by the user
             })
-            ->where('messages.message_reciever', '=', $uid) // Filter by receiver
-            ->select('messages.*', 
-                DB::raw('CASE 
-                    WHEN messages.message_sender IN (SELECT admin_id FROM admins) THEN CONCAT(admins.fname, " ", LEFT(admins.mname, 1), ". ", admins.lname)
-                    ELSE "Unknown Sender"  -- Fallback for senders not in admins
-                END as sender_name'))
+            ->select(
+                'messages.*', 
+                DB::raw('
+                    CASE 
+                        WHEN messages.message_sender = admins.admin_id THEN 
+                            CONCAT(
+                                admins.fname, " ", 
+                                CASE 
+                                    WHEN admins.mname IS NOT NULL THEN CONCAT(LEFT(admins.mname, 1), ". ") 
+                                    ELSE "" 
+                                END, 
+                                admins.lname
+                            )
+                        WHEN messages.message_reciever = receiver_admins.admin_id THEN 
+                            CONCAT(
+                                receiver_admins.fname, " ", 
+                                CASE 
+                                    WHEN receiver_admins.mname IS NOT NULL THEN CONCAT(LEFT(receiver_admins.mname, 1), ". ") 
+                                    ELSE "" 
+                                END, 
+                                receiver_admins.lname
+                            )
+                        ELSE NULL
+                    END as sender_name
+                ')
+            )
             ->orderBy('messages.created_at', 'desc')
             ->get();
     
         return $msg;
     }
+    
+    
+
+    // public function getMessages(Request $request) {
+    //     $uid = $request->input('uid');
+    
+    //     // Main query to get messages for the entire conversation
+    //     $msg = DB::table('messages')
+            
+    //         ->leftJoin('admins', function ($join) {
+    //             $join->on('messages.message_sender', '=', 'admins.admin_id');
+    //         })
+            
+    //         ->leftJoin('admins as receiver_admins', function ($join) {
+    //             $join->on('messages.message_reciever', '=', 'receiver_admins.admin_id');
+    //         })
+    //         ->where(function($query) use ($uid) {
+    //             $query->where('messages.message_sender', '=', $uid) // Messages sent by the user
+    //                   ->orWhere('messages.message_reciever', '=', $uid); // Messages received by the user
+    //         })
+    //         ->select('messages.*', 
+    //             DB::raw('CASE 
+                        // WHEN messages.message_sender IN (SELECT admin_id FROM admins) THEN 
+                        //     CONCAT(receiver_students.fname, 
+                        //         IFNULL(CONCAT(" ", LEFT(receiver_students.mname, 1), "."), ""), 
+                        //         " ", 
+                        //         receiver_students.lname)
+    //                 END as sender_name'))
+    //         ->havingRaw('sender_name IS NOT NULL')
+    //         ->orderBy('messages.created_at', 'desc')
+    //         ->get();
+        
+    //     return $msg;
+    // }
     //getAdmins
+
+    // public function getMessages(Request $request) {
+    //     $uid = $request->input('uid');
+    
+    //     // Main query to get messages for the entire conversation
+    //     $msg = DB::table('messages')
+    //         ->leftJoin('students', function ($join) {
+    //             $join->on('messages.message_sender', '=', 'students.LRN');
+    //         })
+    //         ->leftJoin('admins', function ($join) {
+    //             $join->on('messages.message_sender', '=', 'admins.admin_id');
+    //         })
+    //         ->leftJoin('parent_guardians', function ($join) {
+    //             $join->on('messages.message_sender', '=', 'parent_guardians.guardian_id');
+    //         })
+    //         ->leftJoin('students as receiver_students', function ($join) {
+    //             $join->on('messages.message_reciever', '=', 'receiver_students.LRN');
+    //         })
+    //         ->leftJoin('admins as receiver_admins', function ($join) {
+    //             $join->on('messages.message_reciever', '=', 'receiver_admins.admin_id');
+    //         })
+    //         ->leftJoin('parent_guardians as receiver_guardians', function ($join) {
+    //             $join->on('messages.message_reciever', '=', 'receiver_guardians.guardian_id');
+    //         })
+            // ->where(function($query) use ($uid) {
+            //     $query->where('messages.message_sender', '=', $uid) // Messages sent by the user
+            //           ->orWhere('messages.message_reciever', '=', $uid); // Messages received by the user
+            // })
+    //         ->select('messages.*', 
+    //             DB::raw('CASE 
+                        // WHEN messages.message_sender IN (SELECT LRN FROM students) THEN 
+                        //     CONCAT(students.fname, 
+                        //         IFNULL(CONCAT(" ", LEFT(students.mname, 1), "."), ""), 
+                        //         " ", 
+                        //         students.lname)
+                        // WHEN messages.message_sender IN (SELECT admin_id FROM admins) THEN 
+                        //     CONCAT(receiver_students.fname, 
+                        //         IFNULL(CONCAT(" ", LEFT(receiver_students.mname, 1), "."), ""), 
+                        //         " ", 
+                        //         receiver_students.lname)
+                        // WHEN messages.message_sender IN (SELECT guardian_id FROM parent_guardians) THEN 
+                        //     CONCAT(parent_guardians.fname, 
+                        //         IFNULL(CONCAT(" ", LEFT(parent_guardians.mname, 1), "."), ""), 
+                        //         " ", 
+                        //         parent_guardians.lname)
+    //                 END as sender_name'))
+    //         ->havingRaw('sender_name IS NOT NULL')
+    //         ->orderBy('messages.created_at', 'desc')
+    //         ->get();
+        
+    //     return $msg;
+    // }
     public function getAdmins() {
         $admins = DB::table('admins')
             ->select(
@@ -314,8 +358,10 @@ class AuthController extends Controller
     $recipients = $students->unionAll($guardians)->unionAll($admins)->get();
     return response()->json($recipients);
     }
-    public function composenewmessage(Request $request)
-    {
+    
+    //compose new message
+    public function composenewmessage(Request $request){
+        // Validate the incoming request data
         $validated = $request->validate([
             'message' => 'required|string|max:5000',
             'message_date' => 'required|date',
@@ -346,6 +392,13 @@ class AuthController extends Controller
         ]);
     
         try {
+            // Check if the sender is an admin
+            $isAdmin = DB::table('admins')->where('admin_id', $validated['message_sender'])->exists();
+            if (!$isAdmin) {
+                return response()->json(['error' => 'Only admins are allowed to compose messages.'], 403);
+            }
+    
+            // Create a new message
             $message = new Message();
             $message->message_sender = $validated['message_sender'];
             $message->message_reciever = $validated['message_reciever'];
@@ -353,6 +406,7 @@ class AuthController extends Controller
             $message->message_date = $validated['message_date'];
             $message->save();
     
+            // Log a success message
             Log::info('Message successfully composed', [
                 'message_id' => $message->message_id,
                 'sender' => $validated['message_sender'],
@@ -361,12 +415,17 @@ class AuthController extends Controller
                 'message_date' => $validated['message_date'],
             ]);
     
-            return $this->getMessages($request); 
+            // Return the updated list of messages
+            return $this->getMessages($request);  // Call getMessages method to return updated conversation
         } catch (\Exception $e) {
+            // Log any error that occurs
             Log::error('Error sending message: ' . $e->getMessage());
+    
+            // Return an error response
             return response()->json(['error' => 'Failed to send message'], 500);
         }
     }
+    
 
     //announcements
     public function getAnnouncements()

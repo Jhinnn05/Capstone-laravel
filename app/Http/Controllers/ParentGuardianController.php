@@ -99,107 +99,73 @@ class ParentGuardianController extends Controller
         return response()->json($formattedParents);
     }
 
-public function displaySOA($LRN) {
-    // No need to validate LRN here, as it's a route parameter
-    $id = $LRN;
+    public function displaySOA($LRN)
+    {
+        // Fetch the filename from the financial_statement table for the given LRN
+        $filename = DB::table('financial_statements')
+            ->where('LRN', $LRN)
+            ->value('filename'); // Assuming the column storing the filename is named 'filename'
 
-    // Query the payments and related data
-    $payments = DB::table('payments')
-        ->join('enrollments', 'payments.LRN', '=', 'enrollments.LRN')
-        ->join('students', 'payments.LRN', '=', 'students.LRN')
-        ->leftJoin('tuitions', 'enrollments.grade_level', '=', 'tuitions.grade_level')
-        ->select(
-            'students.lname',
-            'students.fname',
-            'students.mname',
-            'payments.amount_paid',
-            'payments.description',
-            'payments.OR_number',
-            'payments.date_of_payment',
-            'tuitions.tuition',
-            DB::raw('COALESCE(SUM(payments.amount_paid), 0) AS total_paid'),
-            DB::raw('COALESCE(SUM(tuitions.tuition), 0) AS total_tuition')
-        )
-        ->where('payments.LRN', $id)
-        ->groupBy(
-            'students.lname',
-            'students.fname',
-            'students.mname',
-            'payments.amount_paid',
-            'payments.description',
-            'payments.OR_number',
-            'payments.date_of_payment',
-            'tuitions.tuition',
-        )
-        ->get();
-
-        // Calculate the tuition fee (assumed to be the same for the student)
-        $tuition = $payments->isNotEmpty() ? $payments[0]->total_tuition : 0;
-
-        // Initialize remaining balance
-        $remainingBalance = $tuition;
-
-        // Create an array to hold the payment details with running balance
-        $paymentDetails = [];
-
-        foreach ($payments as $payment) {
-            // Subtract the current payment from the remaining balance
-            $remainingBalance -= $payment->amount_paid;
-
-            // Add to payment details with the current balance
-            $paymentDetails[] = [
-                'name' => "{$payment->lname} {$payment->fname} {$payment->mname}",
-                'tuition' => $payment->tuition,
-                'OR_number' => $payment->OR_number,
-                'description' => $payment->description,
-                'amount_paid' => $payment->amount_paid,
-                'date_of_payment' => $payment->date_of_payment,
-                'remaining_balance' => $remainingBalance
-            ];
-        }
-
-        // Return the response
+        // Return the filename in the response
         return response()->json([
-            'tuition_fee' => $tuition,
-            'payments' => $paymentDetails,
-            'remaining_balance' => $remainingBalance,
+            'filename' => $filename,
         ], 200);
     }
-
     public function getClassGrades($cid) {
+        // Step 1: Get the latest school year
+        $latestSchoolYear = DB::table('enrollments')
+            ->where('LRN', $cid) // Ensure you are looking for the specific student
+            ->max('school_year');
+    
+        // Step 2: Query to get the grades for the latest school year
         $grades = DB::table('rosters')
             ->join('students', 'rosters.LRN', '=', 'students.LRN')
+            ->join('enrollments', 'students.LRN', '=', 'enrollments.LRN')
+            ->join('classes', 'rosters.class_id', '=', 'classes.class_id')
+            ->join('sections', 'classes.section_id', '=', 'sections.section_id')
+            ->leftJoin('subjects', 'classes.subject_id', '=', 'subjects.subject_id')
             ->leftJoin('grades', function($join) {
                 $join->on('rosters.LRN', '=', 'grades.LRN')
                      ->on('rosters.class_id', '=', 'grades.class_id');
             })
-            ->join('classes', 'rosters.class_id', '=', 'classes.class_id')
-            ->join('subjects', 'classes.subject_id', '=', 'subjects.subject_id')
             ->select(
                 'students.LRN',
-                'students.fname AS student_fname',
-                'students.lname AS student_lname',
+                DB::raw('CONCAT(students.fname, " ", LEFT(students.mname, 1), ". ", students.lname) AS student_name'),
                 'students.contact_no AS student_contact_no',
+                'subjects.subject_id',
                 'subjects.subject_name',
-                DB::raw('MAX(CASE WHEN grades.term = "First Quarter" THEN grades.grade END) AS `First_Quarter`'),
-                DB::raw('MAX(CASE WHEN grades.term = "Second Quarter" THEN grades.grade END) AS `Second_Quarter`'),
-                DB::raw('MAX(CASE WHEN grades.term = "Third Quarter" THEN grades.grade END) AS `Third_Quarter`'),
-                DB::raw('MAX(CASE WHEN grades.term = "Fourth Quarter" THEN grades.grade END) AS `Fourth_Quarter`')
+                'subjects.strand',
+                'subjects.grade_level',
+                'enrollments.school_year',
+                DB::raw('MAX(CASE WHEN grades.term = "First Quarter" THEN grades.grade ELSE NULL END) AS `First_Quarter`'),
+                DB::raw('MAX(CASE WHEN grades.term = "Second Quarter" THEN grades.grade ELSE NULL END) AS `Second_Quarter`'),
+                DB::raw('MAX(CASE WHEN grades.term = "Third Quarter" THEN grades.grade ELSE NULL END) AS `Third_Quarter`'),
+                DB::raw('MAX(CASE WHEN grades.term = "Fourth Quarter" THEN grades.grade ELSE NULL END) AS `Fourth_Quarter`'),
+                DB::raw('MAX(CASE WHEN grades.term = "Midterm" THEN grades.grade ELSE NULL END) AS `Midterm`'),
+                DB::raw('MAX(CASE WHEN grades.term = "Final" THEN grades.grade ELSE NULL END) AS `Final`')
             )
-            ->where('students.LRN', '=', $cid)  // Filtering by the student's LRN
+            ->where('students.LRN', '=', $cid) // Filter by the student's LRN
+            ->where('enrollments.school_year', '=', $latestSchoolYear) // Filter by the latest school year
             ->groupBy(
                 'students.LRN',
                 'students.fname',
+                'students.mname',
                 'students.lname',
                 'students.contact_no',
-                'subjects.subject_name'
+                'subjects.subject_id',
+                'subjects.subject_name',
+                'subjects.strand',
+                'subjects.grade_level',
+                'enrollments.school_year',
             )
             ->orderBy('subjects.subject_name')
             ->get();
     
-        return response()->json($grades);  // Return results as JSON
+        return response()->json($grades); // Return results as JSON
     }
+    
     public function getAttendance($lcn) {
+        // Get the attendance records for the student along with subject names, ordered by date
         $attendance = DB::table('attendances')
             ->join('classes', 'attendances.class_id', '=', 'classes.class_id')  // Joining with classes
             ->leftJoin('subjects', 'classes.subject_id', '=', 'subjects.subject_id')  // Left joining with subjects
@@ -212,9 +178,30 @@ public function displaySOA($LRN) {
             ->where('attendances.LRN', '=', $lcn)  // Filtering by student LRN
             ->orderBy('attendances.date')  // Order by date
             ->get();
+        
+        // Get the total number of subjects the student is enrolled in, including those with no attendance
+        $subjectCount = DB::table('rosters')
+            ->join('classes', 'rosters.class_id', '=', 'classes.class_id')
+            ->leftJoin('subjects', 'classes.subject_id', '=', 'subjects.subject_id')
+            ->where('rosters.LRN', '=', $lcn)  // Filter by the student LRN in the rosters table
+            ->distinct()  // Ensures counting distinct subjects
+            ->count('subjects.subject_id');  // Count unique subjects the student is enrolled in
     
-        return response()->json($attendance);  // Return results as JSON
+        // Create the desired response format
+        $formattedAttendance = $attendance->map(function ($item) use ($subjectCount) {
+            return [
+                'LRN' => $item->LRN,
+                'attendance_status' => $item->attendance_status,
+                'date' => $item->date,
+                'subject_name' => $item->subject_name,
+                'subject_count' => $subjectCount  // Total number of subjects, including those without attendance
+            ];
+        });
+        
+        // Return the formatted attendance with subject count, already ordered by date
+        return response()->json($formattedAttendance);  // Return results as JSON
     }
+    
     
     /**
      * Store a newly created resource in storage.
@@ -255,6 +242,7 @@ public function displaySOA($LRN) {
         return response()->json($parents, 201);
 
     }
+    
 
     /**
      * Display the specified resource.

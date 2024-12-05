@@ -18,12 +18,18 @@ Route::post('/login',[AuthController::class, 'login']);
 Route::middleware('auth:sanctum')->post('/logout', [AuthController::class, 'logout']);
 Route::get('/Account/{email}',[AuthController::class, 'UserDetails']);
 Route::post('/Account/updatePass/{email}',[AuthController::class, 'updatePass']);
-
+//student
 Route::apiResource('/student',StudentController::class);
+//parent
 Route:: apiResource('/parentguardians',ParentGuardianController::class);
+//statement of account
 Route::get('/displaySOA/{LRN}', [ParentGuardianController::class, 'displaySOA']);
+//grades
 Route::get('/displaygrades/{cid}', [ParentGuardianController::class, 'getClassGrades']);
+
+//attendance
 Route::get('/attendances/{lcn}', [ParentGuardianController::class, 'getAttendance']);
+
 Route:: apiResource('/enrollment',EnrollmentController::class);
 Route::put('/update-password', [AuthController::class, 'updatePass']);
 
@@ -32,6 +38,8 @@ Route::get('/getAdmins', [AuthController::class, 'getAdmins']);
 Route::get('/getMessages', [AuthController::class, 'getMessages']);
 Route::get('/getConvo/{sid}', [AuthController::class, 'getConvo']);
 Route::post('/sendMessage', [AuthController::class, 'sendMessage']);
+Route::get('/getrecepeints', [AuthController::class, 'getrecepeints']);
+Route::post('/composemessage', [AuthController::class, 'composenewmessage']);
 
 //announcements
 Route::get('announcements',[AuthController::class,'getAnnouncements']);
