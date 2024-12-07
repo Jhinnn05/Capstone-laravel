@@ -9,7 +9,9 @@ use App\Models\Message;
 use App\Models\Announcement;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 class AuthController extends Controller
+
 {
     //login
     public function login(Request $request)
@@ -358,73 +360,77 @@ class AuthController extends Controller
     $recipients = $students->unionAll($guardians)->unionAll($admins)->get();
     return response()->json($recipients);
     }
-    
+
     //compose new message
-    public function composenewmessage(Request $request){
-        // Validate the incoming request data
-        $validated = $request->validate([
-            'message' => 'required|string|max:5000',
-            'message_date' => 'required|date',
-            'message_sender' => [
-                'required',
-                function ($attribute, $value, $fail) {
-                    $existsInStudents = DB::table('students')->where('LRN', $value)->exists();
-                    $existsInGuardians = DB::table('parent_guardians')->where('guardian_id', $value)->exists();
-                    $existsInAdmins = DB::table('admins')->where('admin_id', $value)->exists();
-    
-                    if (!$existsInStudents && !$existsInGuardians && !$existsInAdmins) {
-                        $fail("The selected $attribute is invalid.");
-                    }
-                },
-            ],
-            'message_reciever' => [
-                'required',
-                function ($attribute, $value, $fail) {
-                    $existsInStudents = DB::table('students')->where('LRN', $value)->exists();
-                    $existsInGuardians = DB::table('parent_guardians')->where('guardian_id', $value)->exists();
-                    $existsInAdmins = DB::table('admins')->where('admin_id', $value)->exists();
-    
-                    if (!$existsInStudents && !$existsInGuardians && !$existsInAdmins) {
-                        $fail("The selected $attribute is invalid.");
-                    }
-                },
-            ],
-        ]);
-    
-        try {
-            // Check if the sender is an admin
-            $isAdmin = DB::table('admins')->where('admin_id', $validated['message_sender'])->exists();
-            if (!$isAdmin) {
-                return response()->json(['error' => 'Only admins are allowed to compose messages.'], 403);
-            }
-    
-            // Create a new message
-            $message = new Message();
-            $message->message_sender = $validated['message_sender'];
-            $message->message_reciever = $validated['message_reciever'];
-            $message->message = $validated['message'];
-            $message->message_date = $validated['message_date'];
-            $message->save();
-    
-            // Log a success message
-            Log::info('Message successfully composed', [
-                'message_id' => $message->message_id,
-                'sender' => $validated['message_sender'],
-                'receiver' => $validated['message_reciever'],
-                'message_content' => $validated['message'],
-                'message_date' => $validated['message_date'],
-            ]);
-    
-            // Return the updated list of messages
-            return $this->getMessages($request);  // Call getMessages method to return updated conversation
-        } catch (\Exception $e) {
-            // Log any error that occurs
-            Log::error('Error sending message: ' . $e->getMessage());
-    
-            // Return an error response
-            return response()->json(['error' => 'Failed to send message'], 500);
+    public function composenewmessage(Request $request)
+{
+    // Validate the incoming request data
+    $validated = $request->validate([
+        'message' => 'required|string|max:5000',
+        'message_date' => 'required|date',
+        'message_sender' => [
+            'required',
+            function ($attribute, $value, $fail) {
+                // Check if the sender is a parent (guardian)
+                $existsInGuardians = DB::table('parent_guardians')->where('guardian_id', $value)->exists();
+                if (!$existsInGuardians) {
+                    $fail("The selected $attribute is invalid. Sender must be a parent.");
+                }
+            },
+        ],
+        'message_reciever' => [
+            'required',
+            function ($attribute, $value, $fail) {
+                // Check if the receiver is an admin
+                $existsInAdmins = DB::table('admins')->where('admin_id', $value)->exists();
+                if (!$existsInAdmins) {
+                    $fail("The selected $attribute is invalid. Receiver must be an admin.");
+                }
+            },
+        ],
+    ]);
+
+    try {
+        // Check if the sender is a parent
+        $isParent = DB::table('parent_guardians')->where('guardian_id', $validated['message_sender'])->exists();
+        if (!$isParent) {
+            return response()->json(['error' => 'Only parents are allowed to compose messages.'], 403);
         }
+
+        // Check if the receiver is an admin
+        $isAdmin = DB::table('admins')->where('admin_id', $validated['message_reciever'])->exists();
+        if (!$isAdmin) {
+            return response()->json(['error' => 'Receiver must be an admin.'], 403);
+        }
+
+        // Create a new message
+        $message = new Message();
+        $message->message_sender = $validated['message_sender'];
+        $message->message_reciever = $validated['message_reciever'];
+        $message->message = $validated['message'];
+        $message->message_date = $validated['message_date'];
+        $message->save();
+
+        // Log a success message
+        Log::info('Message successfully composed', [
+            'message_id' => $message->message_id,
+            'sender' => $validated['message_sender'],
+            'receiver' => $validated['message_reciever'],
+            'message_content' => $validated['message'],
+            'message_date' => $validated['message_date'],
+        ]);
+
+        // Return the updated list of messages
+        return $this->getMessages($request);  // Call getMessages method to return updated conversation
+    } catch (\Exception $e) {
+        // Log any error that occurs
+        Log::error('Error sending message: ' . $e->getMessage());
+
+        // Return an error response
+        return response()->json(['error' => 'Failed to send message'], 500);
     }
+}
+
     
 
     //announcements
